@@ -36,7 +36,7 @@ cartesians = torch.tensor([[ 0.0000000000,0.0000000000,0.9496765298],
                            [ 0.0000000000,0.0000000000,0.0000000000]], dtype=torch.float64, requires_grad=True)
 interatomics = pyforce.transforms.get_interatomics(3)
 
-# Construct B tensors, remove from torch computation graphs and convert to numpy arrays
+# Construct B tensors (interatomic distances, idm), remove from torch computation graphs and convert to numpy arrays
 B1_idm, B2_idm, B3_idm = pyforce.compute_btensors(interatomics, cartesians, order=3)
 B1_idm, B2_idm, B3_idm = B1_idm.detach().numpy(), B2_idm.detach().numpy(), B3_idm.detach().numpy()
 
@@ -53,13 +53,12 @@ quartic = interatomic_quartic.detach().numpy()
 
 quadratic_fc, L, Lmw = pyforce.nc_analysis.internal_freq(hess, B1_idm, m)
 cubic_fc = pyforce.cubic_from_internals(cubic, hess, m, B1_idm, B2_idm)
+quartic_fc = pyforce.quartic_from_internals(quartic, cubic, hess, m, B1_idm, B2_idm, B3_idm)
 
 print("Quadratic force constants")
 print(quadratic_fc)
 print("Cubic force constants")
 print(cubic_fc)
-
-
-
-
+print("Quartic force constants")
+print(quartic_fc)
 
