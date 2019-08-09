@@ -94,38 +94,33 @@ def intderiv2cartderiv(derivative_tensor, B1):
         raise Exception("Too many dimensions. Add code to function to compute")
     return cart_tensor
 
-def differentiate_nn(geom, E, order=4):
+def differentiate_nn(E, geom, order=4):
     """
     Takes a geometry, sends it through the NN with the transform() method.
-    Returns derivative tensors of a neural network for a particular geometry.
-    If order=4 it will return an unpackable tuple of the gradient, hessian, cubic, and quartic derivatives
-    If order=5 it will return the  hessian, cubic, quartic, and quintic derivatives
+    Returns derivative tensor of a neural network for a particular geometry.
+    If order=3 it will return an unpackable tuple of the hessian and cubic derivatives 
+    If order=4 it will return an unpackable tuple of the hessian, cubic, and quartic derivatives
+    If order=5 it will return the hessian, cubic, quartic, and quintic derivatives
     If order=6 it will return the hessian, cubic, quartic, quintic, and sextic derivatives.
 
     Parameters
     ----------
-    geometry : list
-        A list of geometry parameters
-    cartesian : bool
-        Are the coordinates cartesian coordinates? Otherwise assumes internal coordinates (interatomic distances, typically for NN models)
+    E : torch.tensor containing a scalar
+        Derivatives will be taken of this quantity. It is the value of energy returned from NN, 
+        connected through a series of pytorch computations to 'geometry' argument.
+    geometry : 1d torch.tensor() 
+        A 1d tensor of geometry parameters, requires_grad=True, which were used to compute energy argument 'E'
     order : int
         Highest order of derivative to compute
 
     Returns
     -------
     A tuple of derivative tensors up through order'th derivatives
+
+    WARNING: No symmetry is implemented, so the total number of derivative evaluations
+    for nth order with r geometry parameters is:  
+    (Sum over i=1 to n) of r^i
     """
-    # Initialize variables, transform geometry, compute energy.
-    #tmpgeom = []
-    #for i in geometry:
-    #    tmpgeom.append(torch.tensor(i, dtype=torch.float64, requires_grad=True))
-    #if not cartesian:
-    #    geom = torch.stack(tmpgeom)
-    ##    E = transform(geom)
-    #else:
-    #    tmpgeom2 = torch.stack(tmpgeom)#.clone().detach().requires_grad_(True)
-    #    geom = cart2distances(tmpgeom2)
-    #E = transform(geom)
     # Compute derivatives. Build up higher order tensors one dimension at a time.
     gradient = torch.autograd.grad(E, geom, create_graph=True)[0]
     h1, c1, q1, f1, s1 = [], [], [], [], []
@@ -134,49 +129,104 @@ def differentiate_nn(geom, E, order=4):
         h1.append(h)
         c2, q2, f2, s2 = [], [], [], []
         for d2 in h:
-        #for d2 in h[np.tril_indices]: 
             c = torch.autograd.grad(d2, geom, create_graph=True)[0]
             c2.append(c)
-            q3, f3, s3 = [], [], []
-            for d3 in c:
-                q = torch.autograd.grad(d3, geom, create_graph=True)[0]
-                q3.append(q)
-                if order > 4:
-                    f4, s4 = [], []
-                    for d4 in q:
-                        f = torch.autograd.grad(d4, geom, create_graph=True)[0]
-                        f4.append(f)
-                        if order > 5:
-                            s5 = []
-                            for d5 in f:
-                                s = torch.autograd.grad(d5, geom, create_graph=True)[0]
-                                s5.append(s)
-                            s4.append(torch.stack(s5))
-                        else:
-                            continue
-                    f3.append(torch.stack(f4))
-                    if order > 5: s3.append(torch.stack(s4))
-                else:
-                    continue
-            q2.append(torch.stack(q3))
-            if order > 4: f2.append(torch.stack(f3))
-            if order > 5: s2.append(torch.stack(s3))
+            if order > 3:
+                q3, f3, s3 = [], [], []
+                for d3 in c:
+                    q = torch.autograd.grad(d3, geom, create_graph=True)[0]
+                    q3.append(q)
+                    if order > 4:
+                        f4, s4 = [], []
+                        for d4 in q:
+                            f = torch.autograd.grad(d4, geom, create_graph=True)[0]
+                            f4.append(f)
+                            if order > 5:
+                                s5 = []
+                                for d5 in f:
+                                    s = torch.autograd.grad(d5, geom, create_graph=True)[0]
+                                    s5.append(s)
+                                s4.append(torch.stack(s5))
+                            else:
+                                continue
+                        f3.append(torch.stack(f4))
+                        if order > 5: s3.append(torch.stack(s4))
+                    else:
+                        continue
+                if order > 3: q2.append(torch.stack(q3))
+                if order > 4: f2.append(torch.stack(f3))
+                if order > 5: s2.append(torch.stack(s3))
+            else:
+                continue
         c1.append(torch.stack(c2))
-        q1.append(torch.stack(q2))
+        if order > 3: q1.append(torch.stack(q2))
         if order > 4: f1.append(torch.stack(f2))
         if order > 5: s1.append(torch.stack(s2))
 
     hessian = torch.stack(h1)
     cubic = torch.stack(c1)
-    quartic = torch.stack(q1)
-    if order == 4:
+    if order == 3:
+        return hessian, cubic 
+    elif order == 4:
+        quartic = torch.stack(q1)
         return hessian, cubic, quartic
     elif order == 5:
+        quartic = torch.stack(q1)
         quintic = torch.stack(f1)
         return hessian, cubic, quartic, quintic
     elif order == 6:
+        quartic = torch.stack(q1)
         quintic = torch.stack(f1)
         sextic = torch.stack(s1)
         return hessian, cubic, quartic, quintic, sextic
+
+
+
+#import itertools imp
+import itertools
+from itertools import combinations_with_replacement as cwr
+
+def new_differentiate_nn(E, geom, order=3):
+    """
+    geom must be a LIST of single-variable torch.tensors 
+    """
+    # Compute derivatives. Build up higher order tensors one dimension at a time.
+    nparam = len(geom)#.size()[0]
+    # indices of geometry parameters 0 --> n
+    indices = [i for i in range(nparam)]
+
+    # indices of unique tensor elements
+    h_idx = torch.tensor(list(cwr(indices,2)), dtype=torch.long)
+    c_idx = torch.tensor(list(cwr(indices,3)), dtype=torch.long)
+
+    gradient = torch.autograd.grad(E, geom, create_graph=True)
+
+    h1 = []
+    c1 = []
+    for i,g in enumerate(gradient):
+        for j in range(i, nparam):
+            h = torch.autograd.grad(g, geom[j], create_graph=True)[0]
+            h1.append(h)
+            for k in range(j, nparam):
+                c = torch.autograd.grad(h, geom[k], create_graph=True)[0]
+                c1.append(c)
+
+    # To build up tensors after finding unique derivatives:
+    with torch.no_grad():
+        hess = torch.zeros((nparam,nparam), dtype=torch.float64, requires_grad=False)
+        for i,idx in enumerate(h_idx):
+            hess[idx[0], idx[1]] = h1[i]
+            hess[idx[1], idx[0]] = h1[i]
+        cubic = torch.zeros((nparam,nparam,nparam), dtype=torch.float64, requires_grad=False)
+        for i,idx in enumerate(c_idx):
+            for p in list(itertools.permutations([0,1,2])):
+                cubic[idx[p[0]], idx[p[1]], idx[p[2]]] = c1[i]
+
+
+    return hess, cubic
+
+
+
+
 
 
